@@ -11,7 +11,7 @@ def remesh(
         min_edgelen:torch.Tensor, #V
         max_edgelen:torch.Tensor, #V
         flip:bool,
-        max_vertices=1e6
+        max_vertices=5e6
         ):
 
     # dummies
@@ -184,7 +184,7 @@ class MeshOptimizer:
             
         self._vertices_etc,self._faces = remesh(self._vertices_etc,self._faces,min_edge_len,max_edge_len,flip)
 
-        self._split_vertices_etc()
-        self._vertices.requires_grad_()
+        #self._split_vertices_etc()
+        #self._vertices.requires_grad_()
 
         return self._vertices, self._faces
