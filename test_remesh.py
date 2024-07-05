@@ -21,8 +21,10 @@ V = opt.vertices
 
 start_time = time.time()  
 for i in range(1, 4):
-    V,F = opt.remesh()    
+    V,F = opt.remesh()
     
 end_time = time.time()
 duration = end_time - start_time
 print(f"Remeshing took {duration:.6f} seconds")
+
+save_obj(V,F,'./out/result.obj')
