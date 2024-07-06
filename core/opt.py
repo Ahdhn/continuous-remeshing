@@ -4,26 +4,30 @@ import torch
 import torch_scatter
 from core.remesh import calc_edge_length, calc_edges, calc_face_collapses, calc_face_normals, calc_vertex_normals, collapse_edges, flip_edges, pack, prepend_dummies, remove_dummies, split_edges
 
-def laplace_smoothing(vertices, faces):
-    # Calculate the Laplacian smoothing for the vertices
-    with torch.no_grad():
-        edges, face_to_edge = calc_edges(faces)
-        neighbor_smooth = torch.zeros_like(vertices)
-        count = torch.zeros(vertices.size(0), device=vertices.device)
-        
-        for i in range(edges.size(0)):
-            v1, v2 = edges[i]
-            neighbor_smooth[v1] += vertices[v2]
-            neighbor_smooth[v2] += vertices[v1]
-            count[v1] += 1
-            count[v2] += 1
-
-        count = count.clamp_min(1)  # Avoid division by zero
-        neighbor_smooth /= count[:, None]
-        smoothed_vertices = vertices + 0.5 * (neighbor_smooth - vertices)  # Lambda for smoothing can be adjusted
-
-        return smoothed_vertices
+def laplace_smoothing(vertices, faces, nu):
+    edges, _ = calc_edges(faces)
     
+    # Initialize neighbor_smooth and count
+    neighbor_smooth = torch.zeros_like(vertices)
+    count = torch.zeros(vertices.size(0), device=vertices.device)
+    
+    # Accumulate vertex neighbors
+    neighbor_smooth.index_add_(0, edges[:, 0], vertices[edges[:, 1]])
+    neighbor_smooth.index_add_(0, edges[:, 1], vertices[edges[:, 0]])
+    
+    # Count the occurrences
+    count.index_add_(0, edges[:, 0], torch.ones(edges.size(0), device=vertices.device))
+    count.index_add_(0, edges[:, 1], torch.ones(edges.size(0), device=vertices.device))
+    
+    count = count.clamp_min(1).unsqueeze(1)  # Avoid division by zero and expand dimensions for broadcasting
+    neighbor_smooth /= count
+    
+    # Apply Laplace smoothing
+    laplace = vertices - neighbor_smooth
+    smoothed_vertices = vertices - nu[:, None] * laplace
+    
+    return smoothed_vertices
+
 @torch.no_grad()
 def remesh(
         vertices_etc:torch.Tensor, #V,D
@@ -67,8 +71,9 @@ def remesh(
         flip_edges(vertices,faces,edges,edge_to_face,with_border=False)
 
      # Laplace smoothing after edge flip
+    nu = torch.ones(vertices.shape[0], device=vertices.device)
     vertices = vertices_etc[:, :3]
-    vertices = laplace_smoothing(vertices, faces)
+    vertices = laplace_smoothing(vertices, faces, nu)
     vertices_etc[:, :3] = vertices
 
     vertices_etc, faces = pack(vertices_etc, faces)
