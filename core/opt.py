@@ -34,7 +34,10 @@ def remesh(
         faces:torch.Tensor, #F,3 long
         min_edgelen:torch.Tensor, #V
         max_edgelen:torch.Tensor, #V
-        flip:bool,
+        flip:bool = True,
+        split:bool = True,
+        collapse:bool= True,
+        smooth:bool = True,
         max_vertices=5e6
         ):
 
@@ -46,38 +49,42 @@ def remesh(
     max_edgelen = torch.concat((nan_tensor,max_edgelen))
 
     # collapse
-    edges,face_to_edge = calc_edges(faces) #E,2 F,3
-    edge_length = calc_edge_length(vertices,edges) #E
-    face_normals = calc_face_normals(vertices,faces,normalize=False) #F,3
-    vertex_normals = calc_vertex_normals(vertices,faces,face_normals) #V,3
-    face_collapse = calc_face_collapses(vertices,faces,edges,face_to_edge,edge_length,face_normals,vertex_normals,min_edgelen,area_ratio=0.5)
-    shortness = (1 - edge_length / min_edgelen[edges].mean(dim=-1)).clamp_min_(0) #e[0,1] 0...ok, 1...edgelen=0
-    priority = face_collapse.float() + shortness
-    vertices_etc,faces = collapse_edges(vertices_etc,faces,edges,priority)
+    if collapse:
+        edges,face_to_edge = calc_edges(faces) #E,2 F,3
+        edge_length = calc_edge_length(vertices,edges) #E
+        face_normals = calc_face_normals(vertices,faces,normalize=False) #F,3
+        vertex_normals = calc_vertex_normals(vertices,faces,face_normals) #V,3
+        face_collapse = calc_face_collapses(vertices,faces,edges,face_to_edge,edge_length,face_normals,vertex_normals,min_edgelen,area_ratio=0.5)
+        shortness = (1 - edge_length / min_edgelen[edges].mean(dim=-1)).clamp_min_(0) #e[0,1] 0...ok, 1...edgelen=0
+        priority = face_collapse.float() + shortness
+        vertices_etc,faces = collapse_edges(vertices_etc,faces,edges,priority)
 
     # split
-    if vertices.shape[0]<max_vertices:
-        edges,face_to_edge = calc_edges(faces) #E,2 F,3
-        vertices = vertices_etc[:,:3] #V,3
-        edge_length = calc_edge_length(vertices,edges) #E
-        splits = edge_length > max_edgelen[edges].mean(dim=-1)
-        vertices_etc,faces = split_edges(vertices_etc,faces,edges,face_to_edge,splits,pack_faces=False)
+    if split:
+        if vertices.shape[0]<max_vertices:
+            edges,face_to_edge = calc_edges(faces) #E,2 F,3
+            vertices = vertices_etc[:,:3] #V,3
+            edge_length = calc_edge_length(vertices,edges) #E
+            splits = edge_length > max_edgelen[edges].mean(dim=-1)
+            vertices_etc,faces = split_edges(vertices_etc,faces,edges,face_to_edge,splits,pack_faces=False)
 
-    vertices_etc,faces = pack(vertices_etc,faces)
-    vertices = vertices_etc[:,:3]
+        vertices_etc,faces = pack(vertices_etc,faces)
+        vertices = vertices_etc[:,:3]
 
+    #flip
     if flip:
         edges,_,edge_to_face = calc_edges(faces,with_edge_to_face=True) #E,2 F,3
         flip_edges(vertices,faces,edges,edge_to_face,with_border=False)
 
      # Laplace smoothing after edge flip
-    nu = torch.ones(vertices.shape[0], device=vertices.device)
-    vertices = vertices_etc[:, :3]
-    vertices = laplace_smoothing(vertices, faces, nu)
-    vertices_etc[:, :3] = vertices
+    if smooth:
+        nu = torch.ones(vertices.shape[0], device=vertices.device)
+        vertices = vertices_etc[:, :3]
+        vertices = laplace_smoothing(vertices, faces, nu)
+        vertices_etc[:, :3] = vertices
 
-    vertices_etc, faces = pack(vertices_etc, faces)
-    vertices = vertices_etc[:, :3]
+        vertices_etc, faces = pack(vertices_etc, faces)
+        vertices = vertices_etc[:, :3]
     
     return remove_dummies(vertices_etc,faces)
     
@@ -211,14 +218,24 @@ class MeshOptimizer:
             self._ref_len *= len_change
             self._ref_len.clamp_(*self._edge_len_lims)
 
-    def remesh(self, flip:bool=True)->tuple[torch.Tensor,torch.Tensor]:
+    def remesh(self, flip:bool=True, split:bool = True, collapse:bool= True, smooth:bool = True,)->tuple[torch.Tensor,torch.Tensor]:
         #min_edge_len = self._ref_len * (1 - self._edge_len_tol)        
         #max_edge_len = self._ref_len * (1 + self._edge_len_tol)
         
         min_edge_len = (4.0 / 5.0) * self._ref_len
         max_edge_len = (4.0 / 3.0) * self._ref_len
+
+        #min_edge_len = self._ref_len
+        #max_edge_len = self._ref_len
             
-        self._vertices_etc,self._faces = remesh(self._vertices_etc,self._faces,min_edge_len,max_edge_len,flip)
+        self._vertices_etc,self._faces = remesh(self._vertices_etc,
+                                                self._faces,
+                                                min_edge_len,
+                                                max_edge_len,
+                                                flip,
+                                                split,
+                                                collapse,
+                                                smooth)
 
         self._split_vertices_etc()
         #self._vertices.requires_grad_()
