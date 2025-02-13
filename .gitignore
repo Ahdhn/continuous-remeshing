@@ -1,0 +1,9 @@
+
+.vscode/settings.json
+core/__pycache__/opt.cpython-312.pyc
+core/__pycache__/remesh.cpython-312.pyc
+util/__pycache__/func.cpython-312.pyc
+util/__pycache__/render.cpython-312.pyc
+util/__pycache__/snapshot.cpython-312.pyc
+util/__pycache__/view.cpython-312.pyc
+/out

@@ -4,6 +4,25 @@ import torch
 import torch_scatter
 from core.remesh import calc_edge_length, calc_edges, calc_face_collapses, calc_face_normals, calc_vertex_normals, collapse_edges, flip_edges, pack, prepend_dummies, remove_dummies, split_edges
 
+def laplace_smoothing(vertices, faces):    
+    with torch.no_grad():
+        edges, face_to_edge = calc_edges(faces)
+        neighbor_smooth = torch.zeros_like(vertices)
+        count = torch.zeros(vertices.size(0), device=vertices.device)
+        
+        for i in range(edges.size(0)):
+            v1, v2 = edges[i]
+            neighbor_smooth[v1] += vertices[v2]
+            neighbor_smooth[v2] += vertices[v1]
+            count[v1] += 1
+            count[v2] += 1
+
+        count = count.clamp_min(1)  
+        neighbor_smooth /= count[:, None]
+        smoothed_vertices = vertices + 0.5 * (neighbor_smooth - vertices) 
+
+        return smoothed_vertices
+    
 @torch.no_grad()
 def remesh(
         vertices_etc:torch.Tensor, #V,D
@@ -11,7 +30,7 @@ def remesh(
         min_edgelen:torch.Tensor, #V
         max_edgelen:torch.Tensor, #V
         flip:bool,
-        max_vertices=1e6
+        max_vertices=5e6
         ):
 
     # dummies
@@ -45,6 +64,14 @@ def remesh(
     if flip:
         edges,_,edge_to_face = calc_edges(faces,with_edge_to_face=True) #E,2 F,3
         flip_edges(vertices,faces,edges,edge_to_face,with_border=False)
+
+    # smoothing
+    vertices = vertices_etc[:, :3]
+    vertices = laplace_smoothing(vertices, faces)
+    vertices_etc[:, :3] = vertices
+
+    vertices_etc, faces = pack(vertices_etc, faces)
+    vertices = vertices_etc[:, :3]
 
     return remove_dummies(vertices_etc,faces)
     
@@ -179,8 +206,11 @@ class MeshOptimizer:
             self._ref_len.clamp_(*self._edge_len_lims)
 
     def remesh(self, flip:bool=True)->tuple[torch.Tensor,torch.Tensor]:
-        min_edge_len = self._ref_len * (1 - self._edge_len_tol)
-        max_edge_len = self._ref_len * (1 + self._edge_len_tol)
+        #min_edge_len = self._ref_len * (1 - self._edge_len_tol)
+        #max_edge_len = self._ref_len * (1 + self._edge_len_tol)
+
+        min_edge_len = (4.0 / 5.0) * self._ref_len
+        max_edge_len = (4.0 / 3.0) * self._ref_len
             
         self._vertices_etc,self._faces = remesh(self._vertices_etc,self._faces,min_edge_len,max_edge_len,flip)
 
